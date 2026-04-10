@@ -161,14 +161,6 @@ func (m *Metrics) DeleteVector(start time.Time) {
 	m.delete.Inc()
 }
 
-func (m *Metrics) AddPostings(delta int) {
-	if !m.enabled {
-		return
-	}
-
-	m.postings.Add(float64(delta))
-}
-
 func (m *Metrics) SetPostings(count int) {
 	if !m.enabled {
 		return
