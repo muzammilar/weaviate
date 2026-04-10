@@ -298,11 +298,17 @@ func (tq *TaskQueue) EnqueueReassign(postingID uint64, vecID uint64, version Vec
 	return nil
 }
 
-// Flush the vector index after a batch is processed.
+// Flush the vector index after a batch is processed
+// and update pending metrics now that the queue sizes have been decremented.
 func (tq *TaskQueue) OnBatchProcessed() {
 	if err := tq.index.Flush(); err != nil {
 		tq.index.logger.WithError(err).Error("failed to flush vector index")
 	}
+
+	tq.index.metrics.SetPendingAnalyzeTasks(tq.analyzeQueue.Size())
+	tq.index.metrics.SetPendingSplitTasks(tq.splitQueue.Size())
+	tq.index.metrics.SetPendingMergeTasks(tq.mergeQueue.Size())
+	tq.index.metrics.SetPendingReassignTasks(tq.reassignQueue.Size())
 }
 
 func (tq *TaskQueue) DecodeTask(data []byte) (queue.Task, error) {
@@ -372,7 +378,6 @@ func (t *AnalyzeTask) Execute(ctx context.Context) error {
 		return err
 	}
 
-	t.idx.metrics.SetPendingAnalyzeTasks(t.idx.taskQueue.analyzeQueue.Size())
 	t.idx.metrics.IncAnalyzeCount()
 	return nil
 }
@@ -401,7 +406,6 @@ func (t *SplitTask) Execute(ctx context.Context) error {
 		return err
 	}
 
-	t.idx.metrics.SetPendingSplitTasks(t.idx.taskQueue.splitQueue.Size())
 	t.idx.metrics.IncSplitCount()
 	return nil
 }
@@ -431,7 +435,6 @@ func (t *MergeTask) Execute(ctx context.Context) error {
 		return err
 	}
 
-	t.idx.metrics.SetPendingMergeTasks(t.idx.taskQueue.mergeQueue.Size())
 	t.idx.metrics.IncMergeCount()
 	return nil
 }
@@ -460,7 +463,6 @@ func (t *ReassignTask) Execute(ctx context.Context) error {
 		return err
 	}
 
-	t.idx.metrics.SetPendingReassignTasks(t.idx.taskQueue.reassignQueue.Size())
 	t.idx.metrics.IncReassignCount()
 	return nil
 }
