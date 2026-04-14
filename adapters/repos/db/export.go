@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"sync/atomic"
 
 	"github.com/weaviate/weaviate/adapters/repos/db/helpers"
 	"github.com/weaviate/weaviate/adapters/repos/db/lsmkv"
@@ -199,81 +200,66 @@ func (i *Index) snapshotShardsForExport(ctx context.Context, shardNames []string
 		results[idx].ShardName = name
 	}
 
-	// Snapshot with non-blocking TryRLock so that shards whose lock is held
-	// by a concurrent operation (e.g. tenant deactivation) are deferred.
-	// Each iteration processes the uncontested shards; the loop retries the
-	// rest until every shard has been handled or the context is cancelled.
-	pending := make([]int, len(shardNames))
-	for idx := range shardNames {
-		pending[idx] = idx
-	}
-
-	for len(pending) > 0 {
-		pending = i.trySnapshotShards(ctx, pending, shardNames, exportID, class, isMT, snapshotsRoot, results)
-		if ctx.Err() != nil {
-			cleanupSnapshotResults(results)
-			return nil, ctx.Err()
-		}
-	}
-
-	return results, nil
-}
-
-// trySnapshotShards attempts to snapshot each shard in pending using a
-// non-blocking TryRLock. Successfully locked shards are snapshotted; the
-// rest are returned so the caller can retry.
-func (i *Index) trySnapshotShards(
-	ctx context.Context,
-	pending []int,
-	shardNames []string,
-	exportID string,
-	class *models.Class,
-	isMT bool,
-	snapshotsRoot string,
-	results []export.ShardSnapshotResult,
-) (deferred []int) {
+	// Dispatch loop with TryRLock: shards whose lock is held by a concurrent
+	// operation (e.g. tenant deactivation) are re-queued so uncontested shards
+	// proceed without waiting. The error group's SetLimit caps parallelism;
+	// eg.Go blocks the dispatcher when all slots are busy.
 	eg, egCtx := enterrors.NewErrorGroupWithContextWrapper(i.logger, ctx)
 	eg.SetLimit(runtime.GOMAXPROCS(0))
 
-	// One flag per pending entry; written only by the owning goroutine.
-	contested := make([]bool, len(pending))
+	retry := make(chan int, len(shardNames))
+	for idx := range shardNames {
+		retry <- idx
+	}
 
-	for i2, idx := range pending {
-		shardName := shardNames[idx]
+	var remaining atomic.Int64
+	remaining.Store(int64(len(shardNames)))
+	done := make(chan struct{})
 
-		eg.Go(func() error {
-			if !i.shardCreateLocks.TryRLock(shardName) {
-				contested[i2] = true
+shardLoop:
+	for {
+		select {
+		case <-done:
+			break shardLoop
+		case <-egCtx.Done():
+			break shardLoop
+		case idx := <-retry:
+			shardName := shardNames[idx]
+
+			eg.Go(func() error {
+				if !i.shardCreateLocks.TryRLock(shardName) {
+					retry <- idx
+					return nil
+				}
+				defer i.shardCreateLocks.RUnlock(shardName)
+
+				snapshotName := lsmkv.SafeSnapshotName(exportID, string(i.Config.ClassName), shardName)
+				snapResult, skipReason, err := i.snapshotLocalShardLocked(
+					egCtx, class, isMT, shardName, snapshotsRoot, snapshotName)
+				if err != nil {
+					return fmt.Errorf("snapshot shard %s/%s: %w", i.Config.ClassName, shardName, err)
+				}
+				if snapResult == nil {
+					results[idx].SkipReason = skipReason
+				} else {
+					results[idx].SnapshotDir = snapResult.SnapshotDir
+					results[idx].Strategy = snapResult.Strategy
+				}
+
+				if remaining.Add(-1) == 0 {
+					close(done)
+				}
 				return nil
-			}
-			defer i.shardCreateLocks.RUnlock(shardName)
-
-			snapshotName := lsmkv.SafeSnapshotName(exportID, string(i.Config.ClassName), shardName)
-			snapResult, skipReason, err := i.snapshotLocalShardLocked(egCtx, class, isMT, shardName, snapshotsRoot, snapshotName)
-			if err != nil {
-				return fmt.Errorf("snapshot shard %s/%s: %w", i.Config.ClassName, shardName, err)
-			}
-			if snapResult == nil {
-				results[idx].SkipReason = skipReason
-			} else {
-				results[idx].SnapshotDir = snapResult.SnapshotDir
-				results[idx].Strategy = snapResult.Strategy
-			}
-			return nil
-		}, shardName)
+			}, shardName)
+		}
 	}
 
 	if err := eg.Wait(); err != nil {
 		cleanupSnapshotResults(results)
-		return nil
+		return nil, err
 	}
 
-	for j, skip := range contested {
-		if skip {
-			deferred = append(deferred, pending[j])
-		}
-	}
-	return deferred
+	return results, nil
 }
 
 func cleanupSnapshotResults(results []export.ShardSnapshotResult) {
