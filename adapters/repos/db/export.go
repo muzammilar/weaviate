@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"sort"
 	"sync/atomic"
+	"time"
 
 	"github.com/weaviate/weaviate/adapters/repos/db/helpers"
 	"github.com/weaviate/weaviate/adapters/repos/db/lsmkv"
@@ -29,6 +30,14 @@ import (
 	"github.com/weaviate/weaviate/usecases/multitenancy"
 	"github.com/weaviate/weaviate/usecases/sharding"
 )
+
+// lockPollInterval is how long a snapshot worker sleeps between TryRLock
+// attempts while waiting for a contended shardCreateLocks entry. It also
+// rate-limits the re-queue path to avoid goroutine churn when many shards
+// are write-locked simultaneously. Short enough that the added latency
+// (vs. event-driven wake-up) is negligible compared to typical lock hold
+// times (shard load/unload), long enough to keep CPU overhead trivial.
+const lockPollInterval = 5 * time.Millisecond
 
 // ShardOwnership returns a map of node name to shard names for a given class.
 // Shards are distributed across their replica nodes using a least-loaded
@@ -194,6 +203,10 @@ func (i *Index) snapshotShardsForExport(ctx context.Context, shardNames []string
 	isMT := multitenancy.IsMultiTenant(class.MultiTenancyConfig)
 	snapshotsRoot := i.snapshotsPath()
 
+	if len(shardNames) == 0 {
+		return nil, nil
+	}
+
 	// Pre-allocate one result per shard
 	results := make([]export.ShardSnapshotResult, len(shardNames))
 	for idx, name := range shardNames {
@@ -205,7 +218,8 @@ func (i *Index) snapshotShardsForExport(ctx context.Context, shardNames []string
 	// proceed without waiting. The error group's SetLimit caps parallelism;
 	// eg.Go blocks the dispatcher when all slots are busy.
 	eg, egCtx := enterrors.NewErrorGroupWithContextWrapper(i.logger, ctx)
-	eg.SetLimit(runtime.GOMAXPROCS(0))
+	workers := runtime.GOMAXPROCS(0)
+	eg.SetLimit(workers)
 
 	retry := make(chan int, len(shardNames))
 	for idx := range shardNames {
@@ -227,9 +241,23 @@ shardLoop:
 			shardName := shardNames[idx]
 
 			eg.Go(func() error {
-				if !i.shardCreateLocks.TryRLock(shardName) {
-					retry <- idx
-					return nil
+				// Acquire the shard's read lock. On contention we either
+				// yield the worker slot to another shard (when there are
+				// more shards than slots) or poll until the writer releases.
+				// Both paths respect egCtx so parent-context cancellation
+				// unblocks promptly, and the sleep caps CPU/goroutine churn
+				// when many shards are write-locked at once.
+				for !i.shardCreateLocks.TryRLock(shardName) {
+					select {
+					case <-egCtx.Done():
+						return egCtx.Err()
+					case <-time.After(lockPollInterval):
+					}
+					if remaining.Load() > int64(workers) {
+						// More shards than worker slots — let another shard use this slot.
+						retry <- idx
+						return nil
+					}
 				}
 				defer i.shardCreateLocks.RUnlock(shardName)
 
@@ -255,6 +283,10 @@ shardLoop:
 	}
 
 	if err := eg.Wait(); err != nil {
+		cleanupSnapshotResults(results)
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		cleanupSnapshotResults(results)
 		return nil, err
 	}
