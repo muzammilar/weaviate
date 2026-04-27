@@ -38,7 +38,7 @@ const (
 )
 
 type DBUsers interface {
-	CreateUser(userId, secureHash, userIdentifier, apiKeyFirstLetters string, createdAt time.Time) error
+	CreateUser(userId, secureHash, userIdentifier, apiKeyFirstLetters, namespace string, createdAt time.Time) error
 	CreateUserWithKey(userId, apiKeyFirstLetters string, weakHash [sha256.Size]byte, createdAt time.Time) error
 	DeleteUser(userId string) error
 	ActivateUser(userId string) error
@@ -57,6 +57,7 @@ type User struct {
 	CreatedAt          time.Time
 	LastUsedAt         time.Time
 	ImportedWithKey    bool
+	Namespace          string
 }
 
 type DBUser struct {
@@ -176,7 +177,7 @@ func restoreAllFields(data dbUserdata) dbUserdata {
 	return data
 }
 
-func (c *DBUser) CreateUser(userId, secureHash, userIdentifier, apiKeyFirstLetters string, createdAt time.Time) error {
+func (c *DBUser) CreateUser(userId, secureHash, userIdentifier, apiKeyFirstLetters, namespace string, createdAt time.Time) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
@@ -187,7 +188,14 @@ func (c *DBUser) CreateUser(userId, secureHash, userIdentifier, apiKeyFirstLette
 	c.data.SecureKeyStorageById[userId] = secureHash
 	c.data.IdentifierToId[userIdentifier] = userId
 	c.data.IdToIdentifier[userId] = userIdentifier
-	c.data.Users[userId] = &User{Id: userId, Active: true, InternalIdentifier: userIdentifier, CreatedAt: createdAt, ApiKeyFirstLetters: apiKeyFirstLetters}
+	c.data.Users[userId] = &User{
+		Id:                 userId,
+		Active:             true,
+		InternalIdentifier: userIdentifier,
+		CreatedAt:          createdAt,
+		ApiKeyFirstLetters: apiKeyFirstLetters,
+		Namespace:          namespace,
+	}
 	return c.storeToFile()
 }
 
