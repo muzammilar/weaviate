@@ -27,7 +27,7 @@ var (
 const (
 	// Restricted by max length allowed for dir name (255 chars)
 	// As dir containing class data is named after class, 255 chars are allowed
-	classNameMaxLength = 255
+	ClassNameMaxLength = 255
 	ClassNameRegexCore = `[A-Z][_0-9A-Za-z]{0,254}`
 	// ClassNameRegexAllowRegex allowed chars in class name including regex patterns, 255 chars are allowed
 	ClassNameRegexAllowRegex = `^(\*|[A-Z][_0-9A-Za-z\-.*+?^$()|{}\[\]\\]{0,254})$`
@@ -81,9 +81,9 @@ func ValidateAliasName(name string) (string, error) {
 // ValidateClassNameIncludesRegex validates that this string is a valid class name (format wise)
 // can include regex pattern
 func ValidateClassNameIncludesRegex(name string) (ClassName, error) {
-	if len(name) > classNameMaxLength {
+	if len(name) > ClassNameMaxLength {
 		return "", fmt.Errorf("'%s' is not a valid class name. Name should not be longer than %d characters",
-			name, classNameMaxLength)
+			name, ClassNameMaxLength)
 	}
 	if !regexp.MustCompile(ClassNameRegexAllowRegex).MatchString(name) {
 		return "", fmt.Errorf("'%s' is not a valid class name", name)
@@ -97,9 +97,9 @@ func validateClassOrAliasName(name string, isAlias bool) (string, error) {
 		typ = "alias"
 	}
 
-	if len(name) > classNameMaxLength {
+	if len(name) > ClassNameMaxLength {
 		return "", fmt.Errorf("'%s' is not a valid %s name. Name should not be longer than %d characters",
-			name, typ, classNameMaxLength)
+			name, typ, ClassNameMaxLength)
 	}
 	if !validateClassNameRegex.MatchString(name) {
 		return "", fmt.Errorf("'%s' is not a valid %s name", name, typ)
