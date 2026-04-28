@@ -53,7 +53,7 @@ func newTestManager(t *testing.T, ns usecasesNamespaces.Exister) (*Manager, *api
 	logger.SetLevel(logrus.DebugLevel)
 	dynUser, err := apikey.NewDBUser(t.TempDir(), false, logger)
 	require.NoError(t, err)
-	return &Manager{dynUser: dynUser, namespaces: ns, logger: logger}, dynUser
+	return NewManager(dynUser, ns, false, logger), dynUser
 }
 
 func mustMarshalJSON(t *testing.T, v any) []byte {

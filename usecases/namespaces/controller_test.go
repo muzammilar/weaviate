@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	cmd "github.com/weaviate/weaviate/cluster/proto/api"
+	entschema "github.com/weaviate/weaviate/entities/schema"
 )
 
 func newTestController(t *testing.T) *Controller {
@@ -51,6 +52,13 @@ func TestValidateName(t *testing.T) {
 		{name: "underscore", input: "foo_bar", wantErr: true},
 		{name: "hyphen", input: "foo-bar", wantErr: true},
 		{name: "contains colon", input: "foo:bar", wantErr: true},
+		// Explicit NamespaceSeparator coverage: the reserved separator must
+		// never appear in a namespace name regardless of position, so that
+		// "<ns>:<entity>" qualified identifiers stay unambiguously parseable.
+		{name: "namespace separator middle", input: "foo" + entschema.NamespaceSeparator + "bar", wantErr: true},
+		{name: "namespace separator leading", input: entschema.NamespaceSeparator + "foo", wantErr: true},
+		{name: "namespace separator trailing", input: "foo" + entschema.NamespaceSeparator, wantErr: true},
+		{name: "only namespace separator", input: entschema.NamespaceSeparator, wantErr: true},
 		{name: "whitespace", input: "foo bar", wantErr: true},
 		// reserved
 		{name: "reserved admin", input: "admin", wantErr: true},
