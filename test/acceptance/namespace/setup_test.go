@@ -47,8 +47,7 @@ func TestMain(m *testing.M) {
 		WithUserApiKey(scopedManageUser, scopedManageKey).
 		WithUserApiKey(viewerUser, viewerKey).
 		WithUserApiKey(noPermsUser, noPermsKey).
-		WithRBAC().
-		WithRbacRoots(adminUser).
+		WithDbUsers().
 		WithNamespaces().
 		WithWeaviate().
 		Start(ctx)

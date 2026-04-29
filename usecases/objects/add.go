@@ -31,6 +31,7 @@ import (
 	authzerrs "github.com/weaviate/weaviate/usecases/auth/authorization/errors"
 	"github.com/weaviate/weaviate/usecases/memwatch"
 	"github.com/weaviate/weaviate/usecases/objects/validation"
+	"github.com/weaviate/weaviate/usecases/schema/namespacing"
 )
 
 // AddObject Class Instance to the connected DB.
@@ -38,7 +39,10 @@ func (m *Manager) AddObject(ctx context.Context, principal *models.Principal, ob
 	repl *additional.ReplicationProperties,
 ) (*models.Object, error) {
 	className := schema.UppercaseClassName(object.Class)
-	className, _ = m.resolveAlias(className)
+	className, _, err := namespacing.Resolve(principal, m.schemaManager, className)
+	if err != nil {
+		return nil, err
+	}
 	object.Class = className
 
 	if err := m.authorizer.Authorize(ctx, principal, authorization.CREATE, authorization.ShardsData(className, object.Tenant)...); err != nil {

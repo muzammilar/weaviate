@@ -21,7 +21,6 @@ import (
 
 	"github.com/weaviate/weaviate/entities/models"
 	"github.com/weaviate/weaviate/entities/schema"
-	"github.com/weaviate/weaviate/usecases/namespaces"
 )
 
 // ErrCreateRequiresNamespace is returned by QualifyForCreate when a global
@@ -30,12 +29,16 @@ import (
 // package stays free of auth vocabulary.
 var ErrCreateRequiresNamespace = errors.New("create requires a namespaced principal on a namespaces-enabled cluster")
 
+// NamespaceMaxLength is the maximum length of a namespace name.
+// This is duplicated from usecases/namespaces to avoid import cycles.
+const NamespaceMaxLength = 36
+
 // ShortNameMaxLength caps the raw (pre-qualification) name length for
 // namespaced principals. The cap is computed from the maximum namespace
 // length and the maximum class name length so it stays constant regardless
 // of which namespace the caller is bound to — a `customer` user and a `c` user
 // get the same limit.
-const ShortNameMaxLength = schema.ClassNameMaxLength - namespaces.NameMaxLength - 1
+const ShortNameMaxLength = schema.ClassNameMaxLength - NamespaceMaxLength - 1
 
 // QualifyForCreate is the create-path entry point: it enforces the NS-enabled
 // policy, length-checks the raw short name, and returns the qualified form.
@@ -52,5 +55,5 @@ func QualifyForCreate(principal *models.Principal, nsEnabled bool, raw string) (
 	if len(raw) > ShortNameMaxLength {
 		return "", fmt.Errorf("'%s' is too long: namespaced names must be at most %d characters before qualification", raw, ShortNameMaxLength)
 	}
-	return principal.Namespace + schema.NamespaceSeparator + raw, nil
+	return qualify(principal, raw), nil
 }
