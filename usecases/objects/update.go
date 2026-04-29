@@ -25,6 +25,7 @@ import (
 	"github.com/weaviate/weaviate/entities/versioned"
 	"github.com/weaviate/weaviate/usecases/auth/authorization"
 	"github.com/weaviate/weaviate/usecases/memwatch"
+	"github.com/weaviate/weaviate/usecases/schema/namespacing"
 )
 
 // UpdateObject updates object of class.
@@ -35,7 +36,10 @@ func (m *Manager) UpdateObject(ctx context.Context, principal *models.Principal,
 	repl *additional.ReplicationProperties,
 ) (*models.Object, error) {
 	className := schema.UppercaseClassName(updates.Class)
-	className, _ = m.resolveAlias(className)
+	className, _, err := namespacing.Resolve(principal, m.schemaManager, className)
+	if err != nil {
+		return nil, err
+	}
 	updates.Class = className
 
 	if err := m.authorizer.Authorize(ctx, principal, authorization.UPDATE, authorization.Objects(updates.Class, updates.Tenant, updates.ID)); err != nil {
@@ -57,17 +61,13 @@ func (m *Manager) UpdateObject(ctx context.Context, principal *models.Principal,
 		return nil, fmt.Errorf("cannot process update object: %w", err)
 	}
 
-	return m.updateObjectToConnectorAndSchema(ctx, principal, class, id, updates, repl, fetchedClasses)
+	return m.updateObjectToConnectorAndSchema(ctx, principal, className, id, updates, repl, fetchedClasses)
 }
 
 func (m *Manager) updateObjectToConnectorAndSchema(ctx context.Context,
 	principal *models.Principal, className string, id strfmt.UUID, updates *models.Object,
 	repl *additional.ReplicationProperties, fetchedClasses map[string]versioned.Class,
 ) (*models.Object, error) {
-	if cls := m.schemaManager.ResolveAlias(className); cls != "" {
-		className = cls
-	}
-
 	if id != updates.ID {
 		return nil, NewErrInvalidUserInput("invalid update: field 'id' is immutable")
 	}

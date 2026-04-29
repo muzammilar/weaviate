@@ -23,6 +23,7 @@ import (
 	"github.com/weaviate/weaviate/entities/models"
 	"github.com/weaviate/weaviate/usecases/auth/authorization"
 	autherrs "github.com/weaviate/weaviate/usecases/auth/authorization/errors"
+	"github.com/weaviate/weaviate/usecases/schema/namespacing"
 )
 
 // ValidateObject without adding it to the database. Can be used in UIs for
@@ -31,11 +32,13 @@ func (m *Manager) ValidateObject(ctx context.Context, principal *models.Principa
 	obj *models.Object, repl *additional.ReplicationProperties,
 ) error {
 	className := schema.UppercaseClassName(obj.Class)
-	className, _ = m.resolveAlias(className)
+	className, _, err := namespacing.Resolve(principal, m.schemaManager, className)
+	if err != nil {
+		return err
+	}
 	obj.Class = className
 
-	err := m.authorizer.Authorize(ctx, principal, authorization.READ, authorization.Objects(className, obj.Tenant, obj.ID))
-	if err != nil {
+	if err := m.authorizer.Authorize(ctx, principal, authorization.READ, authorization.Objects(className, obj.Tenant, obj.ID)); err != nil {
 		return err
 	}
 

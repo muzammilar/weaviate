@@ -20,6 +20,7 @@ import (
 	"github.com/weaviate/weaviate/entities/models"
 	"github.com/weaviate/weaviate/usecases/auth/authorization"
 	"github.com/weaviate/weaviate/usecases/auth/authorization/filter"
+	"github.com/weaviate/weaviate/usecases/schema/namespacing"
 )
 
 type QueryInput struct {
@@ -71,7 +72,11 @@ func (m *Manager) Query(ctx context.Context, principal *models.Principal, params
 	class := "*"
 
 	if params != nil && params.Class != "" {
-		params.Class, _ = m.resolveAlias(params.Class)
+		resolved, _, err := namespacing.Resolve(principal, m.schemaManager, params.Class)
+		if err != nil {
+			return nil, &Error{err.Error(), StatusInternalServerError, err}
+		}
+		params.Class = resolved
 		class = params.Class
 	}
 

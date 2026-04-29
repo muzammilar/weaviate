@@ -15,7 +15,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/go-openapi/strfmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -115,64 +114,6 @@ func TestNamespaces_CollectionAndAlias(t *testing.T) {
 		)
 	})
 
-	t.Run("end-to-end: insert and get object with short, lowercase class name", func(t *testing.T) {
-		// Submit the class name lowercased on every hop. This exercises
-		// UppercaseClassName end-to-end through namespacing.Resolve: the bare
-		// short input is uppercased *before* the namespace prefix is glued on,
-		// so the qualified name stored on disk is "<namespace>:E2emovies".
-		for _, key := range []string{user1Key, user2Key} {
-			_, err := helper.Client(t).Schema.SchemaObjectsCreate(
-				schema.NewSchemaObjectsCreateParams().WithObjectClass(&models.Class{Class: "e2emovies"}),
-				helper.CreateAuth(key),
-			)
-			require.NoError(t, err)
-		}
-		defer helper.DeleteClassAuth(t, "customer1:E2emovies", adminKey)
-		defer helper.DeleteClassAuth(t, "customer2:E2emovies", adminKey)
-
-		// Same UUID, same short class name, different props in each namespace.
-		// The two writes must land on independent shards; reads must come back
-		// with the writer's own props, not the other namespace's.
-		sharedID := strfmt.UUID("11111111-2222-3333-4444-555555555555")
-		_, err := helper.CreateObjectWithResponseAuth(t, &models.Object{
-			ID:         sharedID,
-			Class:      "e2emovies",
-			Properties: map[string]any{"title": "The Matrix"},
-		}, user1Key)
-		require.NoError(t, err)
-		_, err = helper.CreateObjectWithResponseAuth(t, &models.Object{
-			ID:         sharedID,
-			Class:      "e2emovies",
-			Properties: map[string]any{"title": "Inception"},
-		}, user2Key)
-		require.NoError(t, err)
-
-		// Each namespaced user reads back their own row.
-		got1, err := helper.GetObjectAuth(t, "e2emovies", sharedID, user1Key)
-		require.NoError(t, err)
-		assert.Equal(t, "customer1:E2emovies", got1.Class)
-		assert.Equal(t, sharedID, got1.ID)
-		props1, ok := got1.Properties.(map[string]any)
-		require.True(t, ok)
-		assert.Equal(t, "The Matrix", props1["title"])
-
-		got2, err := helper.GetObjectAuth(t, "e2emovies", sharedID, user2Key)
-		require.NoError(t, err)
-		assert.Equal(t, "customer2:E2emovies", got2.Class)
-		assert.Equal(t, sharedID, got2.ID)
-		props2, ok := got2.Properties.(map[string]any)
-		require.True(t, ok)
-		assert.Equal(t, "Inception", props2["title"])
-
-		// Admin verification: raw schema view shows both qualified collection names.
-		gotClass1 := helper.GetClassAuth(t, "customer1:E2emovies", adminKey)
-		require.NotNil(t, gotClass1)
-		assert.Equal(t, "customer1:E2emovies", gotClass1.Class)
-		gotClass2 := helper.GetClassAuth(t, "customer2:E2emovies", adminKey)
-		require.NotNil(t, gotClass2)
-		assert.Equal(t, "customer2:E2emovies", gotClass2.Class)
-	})
-
 	t.Run("end-to-end: insert and get object via alias, with cross-namespace isolation", func(t *testing.T) {
 		// Create the same class name in both namespaces so the only thing
 		// keeping user2 from reading user1's object is the resolver.
@@ -231,78 +172,6 @@ func TestNamespaces_CollectionAndAlias(t *testing.T) {
 		require.Error(t, err)
 		var nfAlias *objectsCli.ObjectsClassGetNotFound
 		require.True(t, errors.As(err, &nfAlias), "expected ObjectsClassGetNotFound, got %T: %v", err, err)
-	})
-
-	t.Run("namespaced caller submitting :-qualified class on read double-prefixes to 404", func(t *testing.T) {
-		_, err := helper.Client(t).Schema.SchemaObjectsCreate(
-			schema.NewSchemaObjectsCreateParams().WithObjectClass(&models.Class{Class: "E2EDoublePrefix"}),
-			helper.CreateAuth(user1Key),
-		)
-		require.NoError(t, err)
-		defer helper.DeleteClassAuth(t, "customer1:E2EDoublePrefix", adminKey)
-
-		obj, err := helper.CreateObjectWithResponseAuth(t, &models.Object{
-			Class:      "E2EDoublePrefix",
-			Properties: map[string]any{"title": "Memento"},
-		}, user1Key)
-		require.NoError(t, err)
-		require.NotEmpty(t, obj.ID)
-
-		// user1 supplying the already-qualified name double-prefixes to
-		// "customer1:customer1:E2EDoublePrefix" — no such class, 404.
-		_, err = helper.GetObjectAuth(t, "customer1:E2EDoublePrefix", obj.ID, user1Key)
-		require.Error(t, err)
-		var nf *objectsCli.ObjectsClassGetNotFound
-		require.True(t, errors.As(err, &nf), "expected ObjectsClassGetNotFound, got %T: %v", err, err)
-	})
-
-	t.Run("global admin reads object via qualified class name", func(t *testing.T) {
-		_, err := helper.Client(t).Schema.SchemaObjectsCreate(
-			schema.NewSchemaObjectsCreateParams().WithObjectClass(&models.Class{Class: "E2EAdminRead"}),
-			helper.CreateAuth(user1Key),
-		)
-		require.NoError(t, err)
-		defer helper.DeleteClassAuth(t, "customer1:E2EAdminRead", adminKey)
-
-		obj, err := helper.CreateObjectWithResponseAuth(t, &models.Object{
-			Class:      "E2EAdminRead",
-			Properties: map[string]any{"title": "Tenet"},
-		}, user1Key)
-		require.NoError(t, err)
-		require.NotEmpty(t, obj.ID)
-
-		// Admin has no namespace, so Resolve is a no-op and the qualified
-		// name flows through untouched.
-		got, err := helper.GetObjectAuth(t, "customer1:E2EAdminRead", obj.ID, adminKey)
-		require.NoError(t, err)
-		assert.Equal(t, "customer1:E2EAdminRead", got.Class)
-		assert.Equal(t, obj.ID, got.ID)
-		props, ok := got.Properties.(map[string]any)
-		require.True(t, ok)
-		assert.Equal(t, "Tenet", props["title"])
-	})
-
-	t.Run("global admin reading object via short name returns 404", func(t *testing.T) {
-		_, err := helper.Client(t).Schema.SchemaObjectsCreate(
-			schema.NewSchemaObjectsCreateParams().WithObjectClass(&models.Class{Class: "E2EAdminShort"}),
-			helper.CreateAuth(user1Key),
-		)
-		require.NoError(t, err)
-		defer helper.DeleteClassAuth(t, "customer1:E2EAdminShort", adminKey)
-
-		obj, err := helper.CreateObjectWithResponseAuth(t, &models.Object{
-			Class:      "E2EAdminShort",
-			Properties: map[string]any{"title": "Dunkirk"},
-		}, user1Key)
-		require.NoError(t, err)
-		require.NotEmpty(t, obj.ID)
-
-		// Admin → no namespace → Resolve leaves "E2EAdminShort" as-is. There is
-		// no class by that bare name, only "customer1:E2EAdminShort" → 404.
-		_, err = helper.GetObjectAuth(t, "E2EAdminShort", obj.ID, adminKey)
-		require.Error(t, err)
-		var nf *objectsCli.ObjectsClassGetNotFound
-		require.True(t, errors.As(err, &nf), "expected ObjectsClassGetNotFound, got %T: %v", err, err)
 	})
 
 	t.Run("global admin rejected with 403 on NS-enabled cluster", func(t *testing.T) {

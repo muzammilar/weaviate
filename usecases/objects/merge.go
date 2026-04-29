@@ -29,6 +29,7 @@ import (
 	authzerrs "github.com/weaviate/weaviate/usecases/auth/authorization/errors"
 	"github.com/weaviate/weaviate/usecases/config"
 	"github.com/weaviate/weaviate/usecases/memwatch"
+	"github.com/weaviate/weaviate/usecases/schema/namespacing"
 )
 
 type MergeDocument struct {
@@ -49,7 +50,10 @@ func (m *Manager) MergeObject(ctx context.Context, principal *models.Principal,
 	if err := m.validateInputs(updates); err != nil {
 		return &Error{"bad request", StatusBadRequest, err}
 	}
-	className, aliasName := m.resolveAlias(schema.UppercaseClassName(updates.Class))
+	className, aliasName, err := namespacing.Resolve(principal, m.schemaManager, schema.UppercaseClassName(updates.Class))
+	if err != nil {
+		return &Error{err.Error(), StatusInternalServerError, err}
+	}
 	updates.Class = className
 	cls, id := updates.Class, updates.ID
 	if err := m.authorizer.Authorize(ctx, principal, authorization.UPDATE, authorization.Objects(cls, updates.Tenant, id)); err != nil {

@@ -186,7 +186,10 @@ func NewManager(schemaManager schemaManager,
 	}
 }
 
-// Alias
+// resolveAlias is the pre-WS4 alias-only resolver, kept here for the
+// reference endpoints (AddObjectReference / UpdateObjectReferences /
+// DeleteObjectReference) which are out of WS4 scope. Namespace-aware
+// reference resolution lands in WS7.
 func (m *Manager) resolveAlias(class string) (className, aliasName string) {
 	return alias.ResolveAlias(m.schemaManager, class)
 }

@@ -20,23 +20,23 @@ import (
 	"github.com/weaviate/weaviate/entities/additional"
 	"github.com/weaviate/weaviate/entities/models"
 	"github.com/weaviate/weaviate/usecases/auth/authorization"
+	"github.com/weaviate/weaviate/usecases/schema/namespacing"
 )
 
 // HeadObject check object's existence in the connected DB
 func (m *Manager) HeadObject(ctx context.Context, principal *models.Principal, className string,
 	id strfmt.UUID, repl *additional.ReplicationProperties, tenant string,
 ) (bool, *Error) {
-	className, _ = m.resolveAlias(className)
+	className, _, err := namespacing.Resolve(principal, m.schemaManager, className)
+	if err != nil {
+		return false, &Error{err.Error(), StatusInternalServerError, err}
+	}
 	if err := m.authorizer.Authorize(ctx, principal, authorization.READ, authorization.Objects(className, tenant, id)); err != nil {
 		return false, &Error{err.Error(), StatusForbidden, err}
 	}
 
 	m.metrics.HeadObjectInc()
 	defer m.metrics.HeadObjectDec()
-
-	if cls := m.schemaManager.ResolveAlias(className); cls != "" {
-		className = cls
-	}
 
 	ok, err := m.vectorRepo.Exists(ctx, className, id, repl, tenant)
 	if err != nil {
