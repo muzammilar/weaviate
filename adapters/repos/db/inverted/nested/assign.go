@@ -13,7 +13,9 @@ package nested
 
 import (
 	"fmt"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/weaviate/weaviate/entities/models"
 	"github.com/weaviate/weaviate/entities/schema"
 )
@@ -279,25 +281,17 @@ func (w *walker) walkNestedArray(path string, dt schema.DataType,
 func (w *walker) walkScalarArray(path string, dt schema.DataType,
 	val any, np *models.NestedProperty,
 ) ([]uint64, error) {
-	arr, ok := val.([]any)
-	if !ok {
-		return nil, fmt.Errorf("expected []any for %s, got %T", path, val)
-	}
-
-	if len(arr) == 0 {
-		return nil, nil
-	}
-
 	scalarDT := schema.ScalarFromArrayType(dt)
 	var allPositions []uint64
 
-	for i, elem := range arr {
+	// appendElem records a single array element directly — elem is assignable
+	// to PositionedValue.Value (type any) without an intermediate []any copy.
+	appendElem := func(i int, elem any) error {
 		pos, err := w.nextLeaf()
 		if err != nil {
-			return nil, fmt.Errorf("scalar array %s[%d]: %w", path, i, err)
+			return fmt.Errorf("scalar array %s[%d]: %w", path, i, err)
 		}
 		positions := []uint64{pos}
-
 		w.result.Values = append(w.result.Values, PositionedValue{
 			Path:         path,
 			Value:        elem,
@@ -305,14 +299,72 @@ func (w *walker) walkScalarArray(path string, dt schema.DataType,
 			Tokenization: np.Tokenization,
 			Positions:    positions,
 		})
-
 		w.result.Idx = append(w.result.Idx, IdxEntry{
 			Path:      path,
 			Index:     i,
 			Positions: positions,
 		})
-
 		allPositions = append(allPositions, pos)
+		return nil
+	}
+
+	// Iterate directly over the concrete slice type. Values arrive in different
+	// forms depending on the write path:
+	//   - API/JSON path: enrichSchemaTypes converts []interface{} to []string,
+	//     []float64, or []bool based on the element type.
+	//   - Internal paths (e.g. direct programmatic insertion without a JSON
+	//     round-trip) may produce []int, []time.Time, or []uuid.UUID.
+	// All cases are handled defensively so that walkScalarArray remains correct
+	// regardless of how the caller obtained the value.
+	switch v := val.(type) {
+	case []any:
+		for i, elem := range v {
+			if err := appendElem(i, elem); err != nil {
+				return nil, err
+			}
+		}
+	case []string:
+		for i, elem := range v {
+			if err := appendElem(i, elem); err != nil {
+				return nil, err
+			}
+		}
+	case []float64:
+		for i, elem := range v {
+			if err := appendElem(i, elem); err != nil {
+				return nil, err
+			}
+		}
+	case []bool:
+		for i, elem := range v {
+			if err := appendElem(i, elem); err != nil {
+				return nil, err
+			}
+		}
+	case []int:
+		for i, elem := range v {
+			if err := appendElem(i, elem); err != nil {
+				return nil, err
+			}
+		}
+	case []time.Time:
+		for i, elem := range v {
+			if err := appendElem(i, elem); err != nil {
+				return nil, err
+			}
+		}
+	case []uuid.UUID:
+		for i, elem := range v {
+			if err := appendElem(i, elem); err != nil {
+				return nil, err
+			}
+		}
+	default:
+		return nil, fmt.Errorf("expected []any for %s, got %T", path, val)
+	}
+
+	if len(allPositions) == 0 {
+		return nil, nil
 	}
 
 	w.result.Exists = append(w.result.Exists, ExistsEntry{
